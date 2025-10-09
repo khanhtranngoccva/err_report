@@ -1,22 +1,16 @@
-use std::any::type_name;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Deref, DerefMut};
 use std::panic::Location;
 
-pub type AnyContext = dyn Display + Send + Sync + 'static;
-pub type AnyError = dyn Error + Sync + Send + 'static;
+pub type AnyError = dyn Error + Send + Sync + 'static;
 
-/// A transparent contextualized error wrapper over an inner error type, with an optional context
-/// message and a location specifying where the error occurred.
-///
-/// Avoid stacking a report inside another report.
 pub struct Report<E>
 where
     E: ?Sized,
 {
     pub inner: Box<E>,
-    pub ctx: Option<Box<AnyContext>>,
+    pub ctx: Option<Box<dyn Display + Send + Sync + 'static>>,
     pub location: &'static Location<'static>,
 }
 
@@ -34,10 +28,8 @@ where
     E: Debug + ?Sized,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct(&format!("Report<{}>", type_name::<E>()))
+        f.debug_struct("Report")
             .field("inner", &self.inner)
-            .field("context", &self.ctx.as_ref().map(|f| f.to_string()))
-            .field("location", &self.location)
             .finish()
     }
 }
@@ -49,16 +41,17 @@ where
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.ctx {
             Some(ctx) => f.write_fmt(format_args!("{}: {} @ {}", self.inner, ctx, self.location)),
-            None => f.write_fmt(format_args!("{} @ {}", self.inner, self.location)),
+            None => f.write_fmt(format_args!("{}: {}", self.inner, self.location)),
         }
     }
 }
 
 impl<E> Deref for Report<E>
 where
-    E: Error + ?Sized,
+    E: ?Sized,
 {
     type Target = E;
+
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
@@ -66,7 +59,7 @@ where
 
 impl<E> DerefMut for Report<E>
 where
-    E: Error + ?Sized,
+    E: ?Sized,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
@@ -123,8 +116,8 @@ where
 impl<E> From<E> for Report<E> {
     #[track_caller]
     #[inline]
-    fn from(value: E) -> Self {
-        Self::new(value)
+    fn from(e: E) -> Self {
+        Self::new(e)
     }
 }
 
@@ -153,15 +146,10 @@ pub trait IntoReportExt<E>
 where
     E: ?Sized,
 {
-    /// Create a new Report error wrapper object on top of an existing error.
-    /// Do not invoke this method on an existing report.
     fn into_report(self) -> Report<E>;
 }
 
-impl<E> IntoReportExt<E> for E
-where
-    E: Error + Sync + Send + 'static,
-{
+impl<E> IntoReportExt<E> for E {
     #[track_caller]
     #[inline]
     fn into_report(self) -> Report<E> {
@@ -181,11 +169,10 @@ impl IntoReportExt<AnyError> for Box<AnyError> {
     }
 }
 
-pub trait ResultIntoReportExt<T, E>
-where
-    E: Error + Sync + Send + 'static,
-{
-    fn report(self) -> Result<T, Report<E>>;
+pub trait ResultIntoReportExt<T, E> {
+    fn report(self) -> Result<T, Report<E>>
+    where
+        Self: Sized;
 
     fn report_with_context<Context>(self, context: Context) -> Result<T, Report<E>>
     where
@@ -198,16 +185,14 @@ where
         Self: Sized;
 }
 
-impl<T, E> ResultIntoReportExt<T, E> for Result<T, E>
-where
-    E: Error + Sync + Send + 'static,
-{
-    /// Attach a report object with the location of the error if
-    /// the result type contains an error.
+impl<T, E> ResultIntoReportExt<T, E> for Result<T, E> {
     #[track_caller]
     #[inline]
     fn report(self) -> Result<T, Report<E>> {
-        self.map_err(|e| Report::from(e))
+        match self {
+            Ok(r) => Ok(r),
+            Err(e) => Err(Report::new(e))
+        }
     }
 
     #[track_caller]
@@ -217,7 +202,10 @@ where
         Self: Sized,
         Context: Display + Sync + Send + 'static,
     {
-        self.map_err(|e| Report::from(e).context(context))
+        match self {
+            Ok(r) => Ok(r),
+            Err(e) => Err(Report::new(e).context(context))
+        }
     }
 
     #[track_caller]
@@ -227,37 +215,38 @@ where
         Self: Sized,
         E: Error + Send + Sync + 'static,
     {
-        self.map_err(|e| Report::from(e).into_untyped())
+        match self {
+            Ok(r) => Ok(r),
+            Err(e) => Err(Report::new(e).into_untyped())
+        }
     }
 }
 
-pub trait ResultReportExt<T, E>
-where
-    E: Error + Sync + Send + 'static,
-{
-    /// Attach a displayable context object to a result object that may contain an error.
-    fn context<Context>(self, context: Context) -> Self
+pub trait ResultReportExt<T, E> {
+    fn untyped_err(self) -> Result<T, Report<AnyError>>
     where
-        Context: Display + Send + Sync + 'static;
+        Self: Sized;
 
-    /// Convert the error report inside the result object into an untyped error report.
-    fn untyped_err(self) -> Result<T, Report<AnyError>>;
+    fn context<Context>(self, context: Context) -> Result<T, Report<E>>
+    where
+        Self: Sized,
+        Context: Display + Sync + Send + 'static;
 }
 
 impl<T, E> ResultReportExt<T, E> for Result<T, Report<E>>
 where
-    E: Error + Sync + Send + 'static,
+    E: Error + Send + Sync + 'static,
 {
+    fn untyped_err(self) -> Result<T, Report<AnyError>> {
+        let res = self.map_err(|e| e.into_untyped());
+        res
+    }
+
     fn context<Context>(self, context: Context) -> Result<T, Report<E>>
     where
         Self: Sized,
         Context: Display + Sync + Send + 'static,
     {
         self.map_err(|e| e.context(context))
-    }
-
-    fn untyped_err(self) -> Result<T, Report<AnyError>> {
-        let res = self.map_err(|e| e.into_untyped());
-        res
     }
 }
