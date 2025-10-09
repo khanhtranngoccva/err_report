@@ -41,7 +41,7 @@ where
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self.ctx {
             Some(ctx) => f.write_fmt(format_args!("{}: {} @ {}", self.inner, ctx, self.location)),
-            None => f.write_fmt(format_args!("{}: {}", self.inner, self.location)),
+            None => f.write_fmt(format_args!("{} @ {}", self.inner, self.location)),
         }
     }
 }
