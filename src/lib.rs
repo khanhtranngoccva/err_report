@@ -203,11 +203,6 @@ pub trait ResultIntoReportExt<T, E> {
     where
         Self: Sized,
         Ctx: Display + Sync + Send + 'static;
-
-    fn untyped_report(self) -> Result<T, Report<AnyError>>
-    where
-        E: Error + Send + Sync + 'static,
-        Self: Sized;
 }
 
 impl<T, E> ResultIntoReportExt<T, E> for Result<T, E> {
@@ -230,19 +225,6 @@ impl<T, E> ResultIntoReportExt<T, E> for Result<T, E> {
         match self {
             Ok(r) => Ok(r),
             Err(e) => Err(Report::new(e).context(context)),
-        }
-    }
-
-    #[track_caller]
-    #[inline]
-    fn untyped_report(self) -> Result<T, Report<AnyError>>
-    where
-        Self: Sized,
-        E: Error + Send + Sync + 'static,
-    {
-        match self {
-            Ok(r) => Ok(r),
-            Err(e) => Err(Report::new(e).into_untyped()),
         }
     }
 }
@@ -284,30 +266,6 @@ impl<T, E> ResultIntoReportExt<T, E> for Result<T, Report<E>> {
             Err(e) => {
                 let new_context = Layer {
                     context: Some(Box::new(context)),
-                    location: Location::caller(),
-                };
-                let mut layers = e.layers;
-                layers.insert(0, new_context);
-                Err(Report {
-                    inner: e.inner,
-                    layers,
-                })
-            }
-        }
-    }
-
-    #[track_caller]
-    #[inline]
-    fn untyped_report(self) -> Result<T, Report<AnyError>>
-    where
-        E: Error + Send + Sync + 'static,
-        Self: Sized,
-    {
-        match self {
-            Ok(r) => Ok(r),
-            Err(e) => {
-                let new_context = Layer {
-                    context: None,
                     location: Location::caller(),
                 };
                 let mut layers = e.layers;
