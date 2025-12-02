@@ -238,6 +238,10 @@ pub trait ResultReportExt<T, E> {
     where
         Self: Sized,
         Ctx: Display + Sync + Send + 'static;
+
+    fn layer(self) -> Result<T, Report<E>>
+    where
+        Self: Sized;
 }
 
 impl<T, E> ResultReportExt<T, E> for Result<T, Report<E>>
@@ -255,5 +259,23 @@ where
         Ctx: Display + Sync + Send + 'static,
     {
         self.map_err(|e| e.context(context))
+    }
+
+    fn layer(self) -> Result<T, Report<E>> {
+        match self {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                let new_context = Layer {
+                    context: None,
+                    location: Location::caller(),
+                };
+                let mut layers = e.layers;
+                layers.insert(0, new_context);
+                Err(Report {
+                    inner: e.inner,
+                    layers,
+                })
+            }
+        }
     }
 }
