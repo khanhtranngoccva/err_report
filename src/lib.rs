@@ -272,6 +272,8 @@ impl<T, E> ResultIntoReportExt<T, E> for Result<T, Report<E>> {
         }
     }
 
+    #[track_caller]
+    #[inline]
     fn report_with_context<Ctx>(self, context: Ctx) -> Result<T, Report<E>>
     where
         Self: Sized,
@@ -294,6 +296,8 @@ impl<T, E> ResultIntoReportExt<T, E> for Result<T, Report<E>> {
         }
     }
 
+    #[track_caller]
+    #[inline]
     fn untyped_report(self) -> Result<T, Report<AnyError>>
     where
         E: Error + Send + Sync + 'static,
