@@ -5,13 +5,26 @@ use std::panic::Location;
 
 pub type AnyError = dyn Error + Send + Sync + 'static;
 
+pub struct Layer {
+    pub context: Option<Box<dyn Display + Send + Sync + 'static>>,
+    pub location: &'static Location<'static>,
+}
+
+impl Display for Layer {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match &self.context {
+            Some(context) => write!(f, "{} @ {}", context, self.location),
+            None => write!(f, "@ {}", self.location),
+        }
+    }
+}
+
 pub struct Report<E>
 where
     E: ?Sized,
 {
     pub inner: Box<E>,
-    pub ctx: Option<Box<dyn Display + Send + Sync + 'static>>,
-    pub locations: Vec<&'static Location<'static>>,
+    pub layers: Vec<Layer>,
 }
 
 impl<E> Error for Report<E>
@@ -39,16 +52,13 @@ where
     E: Display + ?Sized,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let locations = self
-            .locations
+        let layer_string = self
+            .layers
             .iter()
-            .map(|l| l.to_string())
+            .map(|c| c.to_string())
             .collect::<Vec<_>>()
-            .join(" + ");
-        match &self.ctx {
-            Some(ctx) => f.write_fmt(format_args!("{}: {} @ {}", self.inner, ctx, locations)),
-            None => f.write_fmt(format_args!("{} @ {}", self.inner, locations)),
-        }
+            .join(", ");
+        write!(f, "{}: {}", self.inner, layer_string)
     }
 }
 
@@ -84,8 +94,10 @@ where
     {
         Self {
             inner: Box::new(e),
-            locations: vec![Location::caller()],
-            ctx: None,
+            layers: vec![Layer {
+                context: None,
+                location: Location::caller(),
+            }],
         }
     }
 
@@ -95,19 +107,22 @@ where
     {
         Report {
             inner: self.inner,
-            ctx: self.ctx,
-            locations: self.locations,
+            layers: self.layers,
         }
     }
 
-    pub fn context<Context>(self, context: Context) -> Report<E>
+    pub fn context<Ctx>(self, context: Ctx) -> Report<E>
     where
-        Context: Display + Send + Sync + 'static,
+        Ctx: Display + Send + Sync + 'static,
     {
+        let mut layers = self.layers;
+        let first_layer = layers
+            .first_mut()
+            .expect("Report objects must have at least one layer");
+        first_layer.context = Some(Box::new(context));
         Report {
             inner: self.inner,
-            ctx: Some(Box::new(context)),
-            locations: self.locations,
+            layers,
         }
     }
 
@@ -142,8 +157,10 @@ impl From<Box<AnyError>> for Report<AnyError> {
     fn from(value: Box<AnyError>) -> Self {
         Self {
             inner: value,
-            locations: vec![Location::caller()],
-            ctx: None,
+            layers: vec![Layer {
+                context: None,
+                location: Location::caller(),
+            }],
         }
     }
 }
@@ -169,8 +186,10 @@ impl IntoReportExt<AnyError> for Box<AnyError> {
     fn into_report(self) -> Report<AnyError> {
         Report {
             inner: self,
-            locations: vec![Location::caller()],
-            ctx: None,
+            layers: vec![Layer {
+                context: None,
+                location: Location::caller(),
+            }],
         }
     }
 }
@@ -180,10 +199,10 @@ pub trait ResultIntoReportExt<T, E> {
     where
         Self: Sized;
 
-    fn report_with_context<Context>(self, context: Context) -> Result<T, Report<E>>
+    fn report_with_context<Ctx>(self, context: Ctx) -> Result<T, Report<E>>
     where
         Self: Sized,
-        Context: Display + Sync + Send + 'static;
+        Ctx: Display + Sync + Send + 'static;
 
     fn untyped_report(self) -> Result<T, Report<AnyError>>
     where
@@ -203,10 +222,10 @@ impl<T, E> ResultIntoReportExt<T, E> for Result<T, E> {
 
     #[track_caller]
     #[inline]
-    fn report_with_context<Context>(self, context: Context) -> Result<T, Report<E>>
+    fn report_with_context<Ctx>(self, context: Ctx) -> Result<T, Report<E>>
     where
         Self: Sized,
-        Context: Display + Sync + Send + 'static,
+        Ctx: Display + Sync + Send + 'static,
     {
         match self {
             Ok(r) => Ok(r),
@@ -228,20 +247,51 @@ impl<T, E> ResultIntoReportExt<T, E> for Result<T, E> {
     }
 }
 
+/// Specialization for Report containers so that we do not end up with a Report wrapper for a Report.
 impl<T, E> ResultIntoReportExt<T, E> for Result<T, Report<E>> {
+    #[track_caller]
+    #[inline]
     fn report(self) -> Result<T, Report<E>>
     where
         Self: Sized,
     {
-        todo!()
+        match self {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                let new_context = Layer {
+                    context: None,
+                    location: Location::caller(),
+                };
+                let mut layers = e.layers;
+                layers.insert(0, new_context);
+                Err(Report {
+                    inner: e.inner,
+                    layers,
+                })
+            }
+        }
     }
 
-    fn report_with_context<Context>(self, context: Context) -> Result<T, Report<E>>
+    fn report_with_context<Ctx>(self, context: Ctx) -> Result<T, Report<E>>
     where
         Self: Sized,
-        Context: Display + Sync + Send + 'static,
+        Ctx: Display + Sync + Send + 'static,
     {
-        todo!()
+        match self {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                let new_context = Layer {
+                    context: Some(Box::new(context)),
+                    location: Location::caller(),
+                };
+                let mut layers = e.layers;
+                layers.insert(0, new_context);
+                Err(Report {
+                    inner: e.inner,
+                    layers,
+                })
+            }
+        }
     }
 
     fn untyped_report(self) -> Result<T, Report<AnyError>>
@@ -249,7 +299,21 @@ impl<T, E> ResultIntoReportExt<T, E> for Result<T, Report<E>> {
         E: Error + Send + Sync + 'static,
         Self: Sized,
     {
-        todo!()
+        match self {
+            Ok(r) => Ok(r),
+            Err(e) => {
+                let new_context = Layer {
+                    context: None,
+                    location: Location::caller(),
+                };
+                let mut layers = e.layers;
+                layers.insert(0, new_context);
+                Err(Report {
+                    inner: e.inner,
+                    layers,
+                })
+            }
+        }
     }
 }
 
@@ -258,10 +322,10 @@ pub trait ResultReportExt<T, E> {
     where
         Self: Sized;
 
-    fn context<Context>(self, context: Context) -> Result<T, Report<E>>
+    fn context<Ctx>(self, context: Ctx) -> Result<T, Report<E>>
     where
         Self: Sized,
-        Context: Display + Sync + Send + 'static;
+        Ctx: Display + Sync + Send + 'static;
 }
 
 impl<T, E> ResultReportExt<T, E> for Result<T, Report<E>>
@@ -273,10 +337,10 @@ where
         res
     }
 
-    fn context<Context>(self, context: Context) -> Result<T, Report<E>>
+    fn context<Ctx>(self, context: Ctx) -> Result<T, Report<E>>
     where
         Self: Sized,
-        Context: Display + Sync + Send + 'static,
+        Ctx: Display + Sync + Send + 'static,
     {
         self.map_err(|e| e.context(context))
     }
