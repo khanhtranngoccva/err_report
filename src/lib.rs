@@ -11,7 +11,7 @@ where
 {
     pub inner: Box<E>,
     pub ctx: Option<Box<dyn Display + Send + Sync + 'static>>,
-    pub location: &'static Location<'static>,
+    pub locations: Vec<&'static Location<'static>>,
 }
 
 impl<E> Error for Report<E>
@@ -39,9 +39,15 @@ where
     E: Display + ?Sized,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let locations = self
+            .locations
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join(" + ");
         match &self.ctx {
-            Some(ctx) => f.write_fmt(format_args!("{}: {} @ {}", self.inner, ctx, self.location)),
-            None => f.write_fmt(format_args!("{} @ {}", self.inner, self.location)),
+            Some(ctx) => f.write_fmt(format_args!("{}: {} @ {}", self.inner, ctx, locations)),
+            None => f.write_fmt(format_args!("{} @ {}", self.inner, locations)),
         }
     }
 }
@@ -78,7 +84,7 @@ where
     {
         Self {
             inner: Box::new(e),
-            location: Location::caller(),
+            locations: vec![Location::caller()],
             ctx: None,
         }
     }
@@ -90,7 +96,7 @@ where
         Report {
             inner: self.inner,
             ctx: self.ctx,
-            location: self.location,
+            locations: self.locations,
         }
     }
 
@@ -101,7 +107,7 @@ where
         Report {
             inner: self.inner,
             ctx: Some(Box::new(context)),
-            location: self.location,
+            locations: self.locations,
         }
     }
 
@@ -136,7 +142,7 @@ impl From<Box<AnyError>> for Report<AnyError> {
     fn from(value: Box<AnyError>) -> Self {
         Self {
             inner: value,
-            location: Location::caller(),
+            locations: vec![Location::caller()],
             ctx: None,
         }
     }
@@ -163,7 +169,7 @@ impl IntoReportExt<AnyError> for Box<AnyError> {
     fn into_report(self) -> Report<AnyError> {
         Report {
             inner: self,
-            location: Location::caller(),
+            locations: vec![Location::caller()],
             ctx: None,
         }
     }
@@ -191,7 +197,7 @@ impl<T, E> ResultIntoReportExt<T, E> for Result<T, E> {
     fn report(self) -> Result<T, Report<E>> {
         match self {
             Ok(r) => Ok(r),
-            Err(e) => Err(Report::new(e))
+            Err(e) => Err(Report::new(e)),
         }
     }
 
@@ -204,7 +210,7 @@ impl<T, E> ResultIntoReportExt<T, E> for Result<T, E> {
     {
         match self {
             Ok(r) => Ok(r),
-            Err(e) => Err(Report::new(e).context(context))
+            Err(e) => Err(Report::new(e).context(context)),
         }
     }
 
@@ -217,8 +223,33 @@ impl<T, E> ResultIntoReportExt<T, E> for Result<T, E> {
     {
         match self {
             Ok(r) => Ok(r),
-            Err(e) => Err(Report::new(e).into_untyped())
+            Err(e) => Err(Report::new(e).into_untyped()),
         }
+    }
+}
+
+impl<T, E> ResultIntoReportExt<T, E> for Result<T, Report<E>> {
+    fn report(self) -> Result<T, Report<E>>
+    where
+        Self: Sized,
+    {
+        todo!()
+    }
+
+    fn report_with_context<Context>(self, context: Context) -> Result<T, Report<E>>
+    where
+        Self: Sized,
+        Context: Display + Sync + Send + 'static,
+    {
+        todo!()
+    }
+
+    fn untyped_report(self) -> Result<T, Report<AnyError>>
+    where
+        E: Error + Send + Sync + 'static,
+        Self: Sized,
+    {
+        todo!()
     }
 }
 
