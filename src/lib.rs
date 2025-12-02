@@ -229,56 +229,6 @@ impl<T, E> ResultIntoReportExt<T, E> for Result<T, E> {
     }
 }
 
-/// Specialization for Report containers so that we do not end up with a Report wrapper for a Report.
-impl<T, E> ResultIntoReportExt<T, E> for Result<T, Report<E>> {
-    #[track_caller]
-    #[inline]
-    fn report(self) -> Result<T, Report<E>>
-    where
-        Self: Sized,
-    {
-        match self {
-            Ok(r) => Ok(r),
-            Err(e) => {
-                let new_context = Layer {
-                    context: None,
-                    location: Location::caller(),
-                };
-                let mut layers = e.layers;
-                layers.insert(0, new_context);
-                Err(Report {
-                    inner: e.inner,
-                    layers,
-                })
-            }
-        }
-    }
-
-    #[track_caller]
-    #[inline]
-    fn report_with_context<Ctx>(self, context: Ctx) -> Result<T, Report<E>>
-    where
-        Self: Sized,
-        Ctx: Display + Sync + Send + 'static,
-    {
-        match self {
-            Ok(r) => Ok(r),
-            Err(e) => {
-                let new_context = Layer {
-                    context: Some(Box::new(context)),
-                    location: Location::caller(),
-                };
-                let mut layers = e.layers;
-                layers.insert(0, new_context);
-                Err(Report {
-                    inner: e.inner,
-                    layers,
-                })
-            }
-        }
-    }
-}
-
 pub trait ResultReportExt<T, E> {
     fn untyped_err(self) -> Result<T, Report<AnyError>>
     where
