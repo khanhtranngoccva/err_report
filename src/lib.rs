@@ -203,6 +203,12 @@ pub trait ResultIntoReportExt<T, E> {
     where
         Self: Sized,
         Ctx: Display + Sync + Send + 'static;
+
+    fn report_with_context_lazy<Ctx, F>(self, f: F) -> Result<T, Report<E>>
+    where
+        Self: Sized,
+        F: FnOnce() -> Ctx,
+        Ctx: Display + Sync + Send + 'static;
 }
 
 impl<T, E> ResultIntoReportExt<T, E> for Result<T, E> {
@@ -225,6 +231,20 @@ impl<T, E> ResultIntoReportExt<T, E> for Result<T, E> {
         match self {
             Ok(r) => Ok(r),
             Err(e) => Err(Report::new(e).context(context)),
+        }
+    }
+
+    #[track_caller]
+    #[inline]
+    fn report_with_context_lazy<Ctx, F>(self, f: F) -> Result<T, Report<E>>
+    where
+        Self: Sized,
+        F: FnOnce() -> Ctx,
+        Ctx: Display + Sync + Send + 'static,
+    {
+        match self {
+            Ok(r) => Ok(r),
+            Err(e) => Err(Report::new(e).context(f())),
         }
     }
 }
