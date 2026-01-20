@@ -126,6 +126,23 @@ where
         }
     }
 
+    #[track_caller]
+    #[inline]
+    pub fn with_layer(self) -> Self {
+        let mut layers = self.layers;
+        layers.insert(
+            0,
+            Layer {
+                context: None,
+                location: Location::caller(),
+            },
+        );
+        Report {
+            inner: self.inner,
+            layers,
+        }
+    }
+
     pub fn raw_message(&self) -> String
     where
         E: Display,
