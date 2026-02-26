@@ -1,3 +1,4 @@
+use display_error_chain::ErrorChainExt;
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::ops::{Deref, DerefMut};
@@ -38,12 +39,10 @@ where
 
 impl<E> Debug for Report<E>
 where
-    E: Debug + ?Sized,
+    E: Error + ?Sized,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Report")
-            .field("inner", &self.inner)
-            .finish()
+        write!(f, "{}", self.chain())
     }
 }
 
